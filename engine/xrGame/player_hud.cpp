@@ -537,7 +537,11 @@ const Fvector& player_hud::attach_rot() const
 	if(m_attached_items[1])
 		return m_attached_items[1]->hands_attach_rot();
 	else
-		return Fvector().set(0,0,0);
+		// NOTE: was return-Fvector-temporary (dangling, C4172).
+		{
+		static Fvector _zero;
+		_zero.set(0,0,0); return _zero;
+		}
 }
 
 const Fvector& player_hud::attach_pos() const
@@ -548,7 +552,11 @@ const Fvector& player_hud::attach_pos() const
 	if(m_attached_items[1])
 		return m_attached_items[1]->hands_attach_pos();
 	else
-		return Fvector().set(0,0,0);
+		// NOTE: was return-Fvector-temporary (dangling, C4172).
+		{
+		static Fvector _zero;
+		_zero.set(0,0,0); return _zero;
+		}
 }
 
 void player_hud::update(const Fmatrix& cam_trans)

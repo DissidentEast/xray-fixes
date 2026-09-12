@@ -3,9 +3,9 @@
 
 #include "stdafx.h"
 #include "xrGameSpy.h"
-BOOL APIENTRY DllMain( HANDLE hModule, 
+BOOL APIENTRY DllMain( HANDLE, 
                        DWORD  ul_reason_for_call, 
-                       LPVOID lpReserved
+                       LPVOID
 					 )
 {
 	switch (ul_reason_for_call)
@@ -62,6 +62,7 @@ XRGAMESPY_API const char* xrGS_GetGameVersion	(const char*KeyValue)
 
 XRGAMESPY_API void xrGS_GetGameID	(int* GameID, int verID)
 {
+	(void)verID; // NOTE: only used under DEMO_BUILD (C4100).
 	*GameID = int(GAMESPY_GAMEID);
 
 #ifdef DEMO_BUILD

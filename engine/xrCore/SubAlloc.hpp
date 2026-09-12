@@ -32,6 +32,7 @@ inline void PrefetchData(void* Addr)
 {
 #if defined(_USE_PREFETCHING)
     BYTE PrefetchByte = *(volatile BYTE*) Addr;
+    (void)PrefetchByte; // NOTE: the volatile read above IS the prefetch; this silences C4189.
 #endif /* defined(_USE_PREFETCHING) */
 }
 inline void BLK_NODE::insert(void* pv,int NU) {

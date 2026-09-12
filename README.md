@@ -55,6 +55,13 @@ Binaries land in *build/bin/Release* (import libs in *build/lib/Release*).
 `CMakePresets.json` provides ready-made presets, including a dedicated-server
 variant (`-DXRAY_DEDICATED_SERVER=ON`).
 
+The build covers the game runtime plus the `utils/` tools (`xrAI`,
+`xrCompress`, `xrDXT`, `ETools`, …; disable with `-DXRAY_BUILD_UTILS=OFF`).
+Four tool projects are skipped with a configure-time message because their
+third-party/editor dependencies don't exist in the repo (same failure in
+`engine.sln`): `xrLC`/`xrLC_Light` (need NVIDIA `nvDXTlib`) and
+`xrDO_Light`/`xrAI` (need the dropped `editors/` tree).
+
 To install straight into a game folder, point `CMAKE_INSTALL_PREFIX` at the
 game root when configuring, then run `cmake --install`:
 

@@ -32,16 +32,9 @@ extern CSE_Abstract *F_entity_Create	(LPCSTR section);
 extern CScriptPropertiesListHelper	*g_property_list_helper;
 extern HMODULE						prop_helper_module;
 
-#ifdef NDEBUG
-
-namespace std {
-	void terminate			()
-	{
-		abort				();
-	}
-} // namespace std
-
-#endif // #ifdef NDEBUG
+// NOTE: removed custom std::terminate() here (undefined behavior, hard error C2883 on
+// modern MSVC). The default terminate handler calls abort() anyway, so this
+// changes nothing observable.
 
 extern "C" {
 	FACTORY_API	ISE_Abstract* __stdcall create_entity	(LPCSTR section)

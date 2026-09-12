@@ -19,7 +19,7 @@
 #pragma warning(pop)
 
 #pragma comment(lib,"d3dx9.lib")
-#pragma comment(lib,"dxerr9.lib")
+// NOTE: dxerr9.lib does not ship; DX_GetErrorDescription9 is self-contained now.
 
 // Warnings
 #pragma warning (disable : 4786 )		// too long names

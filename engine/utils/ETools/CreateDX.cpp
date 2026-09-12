@@ -4,13 +4,10 @@
 #include	"stdafx.h"
 #include	"D3DX_Wrapper.h"
 
-#include	"dxerr9.h"
 // misc
-__declspec( dllimport ) bool WINAPI FSColorPickerDoModal(unsigned int * currentColor, unsigned int * originalColor, const int initialExpansionState);
-extern "C" __declspec(dllexport) bool  __stdcall FSColorPickerExecute(unsigned int * currentColor, unsigned int * originalColor, const int initialExpansionState)
-{
-	return FSColorPickerDoModal(currentColor, originalColor, initialExpansionState);
-}
+// NOTE: removed FSColorPickerExecute thunk: it forwarded to
+// FSColorPickerDoModal(), which lived in the editor (dropped from
+// engine.sln) and has no callers left.
 
 extern "C"{ 
 	ETOOLS_API UINT WINAPI D3DX_GetDriverLevel(LPDIRECT3DDEVICE9 pDevice)
@@ -189,9 +186,15 @@ extern "C"{
 	}
 
 	ETOOLS_API const char*  WINAPI DX_GetErrorDescription9(HRESULT hr)
-	{
-		return DXGetErrorDescription9(hr);
-	}
+{
+	// NOTE: dxerr9.h/lib are absent (June 2010 SDK ships DxErr instead,
+	// whose lib is not vendored either). FormatMessage covers HRESULTs.
+	static string_path buf;
+	if (!FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL, hr, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf, sizeof(buf), NULL))
+		sprintf_s(buf, sizeof(buf), "Unknown error 0x%08X", hr);
+	return buf;
+}
 	ETOOLS_API D3DXMATRIX* WINAPI 
 		D3DX_MatrixInverse(          
 		D3DXMATRIX *pOut,

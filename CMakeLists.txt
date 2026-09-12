@@ -16,5 +16,6 @@ option(XRAY_DEDICATED_SERVER "Build xrEngine as dedicated server (adds DEDICATED
 option(XRAY_BUILD_RENDER_R1 "Build xrRender_R1 (DX9)" ON)
 option(XRAY_BUILD_RENDER_R2 "Build xrRender_R2 (DX9)" ON)
 option(XRAY_BUILD_RENDER_R3 "Build xrRender_R3 (DX10)" ON)
+option(XRAY_BUILD_UTILS "Build utils/ modding tools (xrAI, xrLC, ...)" ON)
 
 add_subdirectory(engine)

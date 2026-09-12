@@ -38,7 +38,7 @@ void safe_verify(LPCSTR file_name,
 		}
 	} __except(EXCEPTION_EXECUTE_HANDLER)
 	{
-		printf("FATAL ERROR (%s): failed to verify data\n");
+		printf("FATAL ERROR (%s): failed to verify data\n", file_name);
 	}
 }
 
@@ -155,8 +155,12 @@ void run_configs_verifyer_server()
 	string_path	file_to_check;
 	file_to_check[0] = 0;
 	xr_string	tmp_stirng;
-	while (gets(file_to_check))
+	// NOTE: gets() was removed from C++; fgets keeps the newline, strip it.
+	while (fgets(file_to_check, sizeof(file_to_check), stdin))
 	{
+		size_t len = xr_strlen(file_to_check);
+		if (len > 0 && file_to_check[len - 1] == '\n')
+			file_to_check[len - 1] = 0;
 		check_file(file_to_check);
 	}
 };

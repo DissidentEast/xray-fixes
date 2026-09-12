@@ -1,7 +1,7 @@
 # X-Ray Fixes — game-runtime CMake targets (Win32, VS2022/v143, C++17).
 # Mirrors engine/engine.sln projects needed to produce the shipping binaries
-# in bin/ (xrEngine.exe + runtime DLLs). Utils, editors and other tools from
-# the .sln are intentionally out of scope.
+# in bin/ (xrEngine.exe + runtime DLLs). The utils/ tools live in
+# engine/utils/CMakeLists.txt.
 #
 # Source handling: file(GLOB) per module + explicit exclusions matching the
 # vcxproj <ExcludedFromBuild> entries. Per-config defines use generator
@@ -103,6 +103,9 @@ target_compile_definitions(CxImage PRIVATE
   $<$<OR:$<CONFIG:Debug>,$<CONFIG:Mixed>>:_ALLOW_RTCc_IN_STL;_DEBUG;_ITERATOR_DEBUG_LEVEL=0>
   $<$<CONFIG:Release>:NDEBUG>)
 target_link_libraries(CxImage PRIVATE jpeg)
+# Whole target is vendored CxImage: `register` storage class (removed from
+# modern C++) in ximaint.cpp has no codegen effect (C5033).
+target_compile_options(CxImage PRIVATE /wd5033)
 
 # crypto (static) — OpenSSL-derived sources, no PCH.
 file(GLOB CRYPTO_SRCS CONFIGURE_DEPENDS
@@ -192,6 +195,25 @@ target_compile_definitions(vorbisfile PRIVATE
   $<$<OR:$<CONFIG:Debug>,$<CONFIG:Mixed>>:_DEBUG> $<$<CONFIG:Release>:NDEBUG>)
 target_link_libraries(vorbisfile PRIVATE vorbis ogg)
 
+# ETools links vorbisenc_static.lib, which no vcxproj builds (MSBuild links
+# it only if the file happens to exist). Build it here from the same source
+# libvorbis_static already compiles in (linker keeps the first definition).
+add_library(vorbisenc STATIC
+  "${XRAY_SDK_DIR}/sources/libvorbis-1.2.3/lib/vorbisenc.c")
+set_target_properties(vorbisenc PROPERTIES OUTPUT_NAME "libvorbisenc_static")
+set_property(TARGET vorbisenc PROPERTY MSVC_RUNTIME_LIBRARY
+  "MultiThreaded$<$<OR:$<CONFIG:Debug>,$<CONFIG:Mixed>>:Debug>")
+target_include_directories(vorbisenc PRIVATE
+  "${XRAY_SDK_DIR}/sources/libvorbis-1.2.3/include"
+  "${XRAY_SDK_DIR}/sources/libogg-1.1.4/include" "${XRAY_SDK_INCLUDE_DIR}")
+target_compile_definitions(vorbisenc PRIVATE
+  WIN32 _WINDOWS _USRDLL LIBVORBIS_EXPORTS
+  $<$<OR:$<CONFIG:Debug>,$<CONFIG:Mixed>>:_DEBUG> $<$<CONFIG:Release>:NDEBUG>)
+
+# ETools Debug links ogg/vorbis/vorbisfile by _d-suffixed names (matching the
+# upstream x64 convention); same base names in Release/Mixed.
+set_target_properties(ogg vorbis vorbisfile PROPERTIES DEBUG_POSTFIX "_d")
+
 # libtheora (static, Win32 + OC_X86_ASM like the vcxproj Win32 configs).
 file(GLOB THEORA_SRCS CONFIGURE_DEPENDS
   "${XRAY_SDK_DIR}/sources/libtheora-1.1.1/lib/*.c"
@@ -232,7 +254,7 @@ target_compile_definitions(oalib PRIVATE
 # exception policy instead — see xray_engine_eh below.)
 foreach(_t IN ITEMS
     zlib minizip BugTrap ode openal32 jpeg luajit luabind
-    ogg vorbis vorbisfile theora oalib)
+    ogg vorbis vorbisfile vorbisenc theora oalib)
   target_compile_options(${_t} PRIVATE /EHsc)
 endforeach()
 
@@ -289,6 +311,11 @@ file(GLOB XRCORE_NOPCH CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/xrCore/xrstring.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/xrCore/stream_reader.cpp")
 set_source_files_properties(${XRCORE_NOPCH} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+# Vendored LZO uses the `register` keyword, removed from modern C++ (C5033).
+# The keyword has no effect on codegen, but the sources are left untouched.
+file(GLOB XRCORE_LZO CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/xrCore/rt_lzo*.cpp")
+set_source_files_properties(${XRCORE_LZO} PROPERTIES COMPILE_OPTIONS "/wd5033")
 target_compile_definitions(xrCore PRIVATE
   WIN32 _WINDOWS _USRDLL XRCORE_EXPORTS _SECURE_SCL=0 _MBCS
   $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Mixed>:MIXED;DEBUG>
@@ -453,6 +480,8 @@ target_compile_definitions(xrD3D9-Null PRIVATE
   WIN32 _WINDOWS _USRDLL XRD3D9NULL_EXPORTS _SECURE_SCL=0 _MBCS
   $<$<CONFIG:Debug>:DEBUG> $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 target_compile_options(xrD3D9-Null PRIVATE /W4)
+# Stub library: unreferenced parameters are the whole point (C4100 ×366).
+target_compile_options(xrD3D9-Null PRIVATE /wd4100)
 
 # xrRender_R1/R2/R3 (shared) — PCH stdafx.h (own dir). Each renderer compiles
 # its own directory plus the shared Layers/xrRender (+blenders) and
@@ -645,6 +674,11 @@ target_compile_options(xrEngine PRIVATE /W4 /Zm200)
 # listed below (xrD3D9-Null uses xray_engine_eh_release instead, see below).
 add_library(xray_engine_eh_release INTERFACE)
 target_compile_options(xray_engine_eh_release INTERFACE $<$<CONFIG:Debug>:/EHsc>)
+# xrLC/xrLC_Light take the release branch of xrCore.h in Debug and Release
+# (FORCE_NO_EXCEPTIONS) but the debug branch in Mixed, so only Mixed may use
+# exceptions. Mirrors their vcxproj <ExceptionHandling> settings.
+add_library(xray_engine_eh_mixed INTERFACE)
+target_compile_options(xray_engine_eh_mixed INTERFACE $<$<CONFIG:Mixed>:/EHsc>)
 foreach(_t IN ITEMS
     xrCore xrCDB xrCPU_Pipe xrNetServer xrParticles xrXMLParser xrGameSpy
     xrSound xrAPI xrRender_R1 xrRender_R2 xrRender_R3 xrGame xrEngine
@@ -676,6 +710,11 @@ target_link_libraries(xrD3D9-Null PRIVATE xray_engine_eh_release)
 target_link_libraries(CxImage PRIVATE xrCore)
 target_link_libraries(crypto PRIVATE xrCore)
 
+# Tools (xrAI/xrLC/...). Gated so game-only checkouts can skip them.
+if(XRAY_BUILD_UTILS)
+  add_subdirectory(utils)
+endif()
+
 # `cmake --install` support: drop the built runtime straight into a game
 # installation. Point CMAKE_INSTALL_PREFIX at the game root:
 #   cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 -DCMAKE_INSTALL_PREFIX="C:/Games/S.T.A.L.K.E.R. - Clear Sky"
@@ -688,6 +727,14 @@ set(_xray_runtime_targets
 foreach(_r R1 R2 R3)
   if(TARGET xrRender_${_r})
     list(APPEND _xray_runtime_targets xrRender_${_r})
+  endif()
+endforeach()
+# Tools go to the same bin/ when they were built (XRAY_BUILD_UTILS).
+foreach(_t IN ITEMS
+    xrQSlim LWO ctool CompressionTest mp_screenshots_info mp_configs_verifyer
+    xrDXT xrSE_Factory ETools xrCompress)
+  if(TARGET ${_t})
+    list(APPEND _xray_runtime_targets ${_t})
   endif()
 endforeach()
 install(TARGETS ${_xray_runtime_targets} RUNTIME DESTINATION bin)

@@ -25,7 +25,10 @@
 #endif //defined(MAKEFOURCC)
 
 #pragma comment(lib,"xrCore.lib")
-#pragma comment(lib,"nvDXTlibMTDLL.lib")
+// NOTE: the prebuilt NVIDIA nvDXTlibMTDLL.lib in this folder targets the
+// VS2003 CRT and cannot link (35 unresolved std:: imports); the pragma
+// that pulled it in is removed here. See the xrDXT block in
+// engine/utils/CMakeLists.txt for the full story.
 
 #pragma warning( disable : 4995 )
 

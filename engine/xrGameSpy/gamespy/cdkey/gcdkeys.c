@@ -891,7 +891,7 @@ static void xcode_buf(char *buf, int len)
 Returns the hostent in savehent if it is not NULL */
 static int get_sockaddrin(char *host, int port, struct sockaddr_in *saddr, struct hostent **savehent)
 {
-	struct hostent *hent;
+	struct hostent *hent = NULL; // NOTE: host==NULL path left it uninitialized (C4701/C4703).
 	char broadcast_t[] = {'2','5','5','.','2','5','5','.','2','5','5','.','2','5','5','\0'}; //255.255.255.255
 
 	memset(saddr,0,sizeof(struct sockaddr_in));
