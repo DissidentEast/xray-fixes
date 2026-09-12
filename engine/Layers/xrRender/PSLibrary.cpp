@@ -38,7 +38,10 @@ void CPSLibrary::OnCreate()
  
 void CPSLibrary::OnDestroy()
 {
-	for (PS::PEDIt e_it = m_PEDs.begin(); e_it!=m_PEDs.end(); e_it++)
+	// NOTE: e_it is intentionally declared outside the loops. The second loop
+	// reuses it (VC6-era for-loop scoping), which modern MSVC rejects (C2065).
+	PS::PEDIt e_it = m_PEDs.begin();
+	for (; e_it!=m_PEDs.end(); e_it++)
     	(*e_it)->DestroyShader();
 
 	for (e_it = m_PEDs.begin(); e_it!=m_PEDs.end(); e_it++)

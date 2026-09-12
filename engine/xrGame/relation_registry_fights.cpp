@@ -27,7 +27,10 @@ void RELATION_REGISTRY::FightRegister (u16 attacker, u16 defender, ALife::ERelat
 	UpdateFightRegister();
 
 	FIGHT_VECTOR& fights = fight_registry();
-	for(FIGHT_VECTOR_IT it = fights.begin(); it != fights.end(); it++)
+	// NOTE: 'it' is used after the loop; declared here for conforming
+	// for-loop scope (modern MSVC rejects the VC6-era leak with C2065).
+	FIGHT_VECTOR_IT it;
+	for(it = fights.begin(); it != fights.end(); it++)
 	{
 		FIGHT_DATA& fight_data = *it;
 		if(attacker == fight_data.attacker && defender == fight_data.defender)

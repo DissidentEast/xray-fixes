@@ -40,5 +40,38 @@ A compilation of fixes for S.T.A.L.K.E.R. Clear Sky from multitude of other proj
 ## Installation
 1. Paste *bin* into the game's root directory, overwrite files.
 
+## Building from source (CMake)
+Requires Visual Studio 2022 (v143 toolset) with C++ and MFC/ATL components.
+The engine is 32-bit only, so configure with `-A Win32`. The legacy
+*engine/engine.sln* is left untouched and keeps working.
+
+```bat
+cmake -S . -B build -G "Visual Studio 17 2022" -A Win32
+cmake --build build --config Release
+```
+
+Binaries land in *build/bin/Release* (import libs in *build/lib/Release*).
+`Debug` and `Mixed` configs work the same way (`--config Debug|Mixed`).
+`CMakePresets.json` provides ready-made presets, including a dedicated-server
+variant (`-DXRAY_DEDICATED_SERVER=ON`).
+
+To install straight into a game folder, point `CMAKE_INSTALL_PREFIX` at the
+game root when configuring, then run `cmake --install`:
+
+```bat
+cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 -DCMAKE_INSTALL_PREFIX="C:\Games\S.T.A.L.K.E.R. - Clear Sky"
+cmake --build build --config Release
+cmake --install build --config Release
+```
+
+This copies the built `.dll`/`.exe` files into the game's `bin/` directory.
+Every push/PR is also built on GitHub Actions (see `.github/workflows`).
+
+Known build notes:
+* `Mixed` builds everything except *xrGame.dll*: its link needs the
+  non-virtual `CEnvironment` interface while the Mixed *xrEngine* (built with
+  `INGAME_EDITOR`) only exports the virtual one. The stock *.sln* fails the
+  same way; use `Release` (or `Debug`) for a complete build.
+
 ## Known issues
 See: [FunXRay/xray-csky](https://github.com/FunXRay/xray-csky)'s readme.

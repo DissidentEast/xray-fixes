@@ -36,8 +36,8 @@ template<class T>
 				
 						T		*my_ptr;
 					public:
-								iterator(){my_ptr=0;}
-								iterator(T* i){ my_ptr=i; }
+								iterator();
+								iterator(T* i);
 					iterator	operator ++ ()	{return my_ptr=((my_ptr)->next);}
 					T*			operator *	()	{return	my_ptr;}
 					bool		operator !=	 (iterator right){return my_ptr!=right.my_ptr;}
@@ -85,6 +85,19 @@ template<class T>
 				return iterator(0);
 			}
 	};
+
+
+template<class T>
+	CPHItemList<T>::iterator::iterator()
+{
+	my_ptr = 0;
+}
+
+template<class T>
+	CPHItemList<T>::iterator::iterator(T* i)
+{
+	my_ptr = i;
+}
 
 template<class T>
 	class CPHItemStack : 

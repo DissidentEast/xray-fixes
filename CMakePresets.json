@@ -1,0 +1,42 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "vs2022-win32",
+      "displayName": "VS 2022 Win32 (Release)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "toolset": "v143",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Mixed;Release",
+        "XRAY_DEDICATED_SERVER": "OFF"
+      }
+    },
+    {
+      "name": "vs2022-win32-dedicated",
+      "displayName": "VS 2022 Win32 dedicated server (Release)",
+      "inherits": "vs2022-win32",
+      "cacheVariables": {
+        "XRAY_DEDICATED_SERVER": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "vs2022-win32",
+      "configuration": "Release"
+    },
+    {
+      "name": "mixed",
+      "configurePreset": "vs2022-win32",
+      "configuration": "Mixed"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "vs2022-win32",
+      "configuration": "Debug"
+    }
+  ]
+}

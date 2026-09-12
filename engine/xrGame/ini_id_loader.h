@@ -122,7 +122,10 @@ CSINI_IdToIndex::~CIni_IdToIndex()
 TEMPLATE_SPECIALIZATION
 const typename ITEM_DATA* CSINI_IdToIndex::GetById (const T_ID& str_id, bool no_assert)
 {
-	for(T_VECTOR::iterator it = m_pItemDataVector->begin();
+	// NOTE: 'it' is used after the loop; declared here for conforming
+	// for-loop scope (modern MSVC rejects the VC6-era leak with C2065).
+	T_VECTOR::iterator it;
+	for(it = m_pItemDataVector->begin();
 		m_pItemDataVector->end() != it; it++)
 	{
 		if(!xr_strcmp((*it).id, str_id))
