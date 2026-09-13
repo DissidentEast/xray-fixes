@@ -42,25 +42,30 @@ A compilation of fixes for S.T.A.L.K.E.R. Clear Sky from multitude of other proj
 
 ## Building from source (CMake)
 Requires Visual Studio 2022 (v143 toolset) with C++ and MFC/ATL components.
-The engine is 32-bit only, so configure with `-A Win32`. The legacy
-*engine/engine.sln* is left untouched and keeps working.
+Both **32-bit** (the original shipping architecture) and **64-bit** builds are
+supported; the legacy *engine/engine.sln* is left untouched and keeps working
+(32-bit only, with the original LuaJIT 1.1.4 sources).
 
 ```bat
-cmake -S . -B build -G "Visual Studio 17 2022" -A Win32
-cmake --build build --config Release
+cmake -S . -B build     -G "Visual Studio 17 2022" -A Win32
+cmake -S . -B build-x64 -G "Visual Studio 17 2022" -A x64
+cmake --build build     --config Release
+cmake --build build-x64 --config Release
 ```
 
-Binaries land in *build/bin/Release* (import libs in *build/lib/Release*).
-`Debug` and `Mixed` configs work the same way (`--config Debug|Mixed`).
-`CMakePresets.json` provides ready-made presets, including a dedicated-server
-variant (`-DXRAY_DEDICATED_SERVER=ON`).
+Binaries land in *build/bin/Release* and *build-x64/bin/Release* (import libs
+in *build*/lib/Release*). `Debug` and `Mixed` configs work the same way
+(`--config Debug|Mixed`). `CMakePresets.json` provides ready-made presets,
+including dedicated-server variants (`-DXRAY_DEDICATED_SERVER=ON`).
 
 The build covers the game runtime plus the `utils/` tools (`xrAI`,
-`xrCompress`, `xrDXT`, `ETools`, …; disable with `-DXRAY_BUILD_UTILS=OFF`).
-Four tool projects are skipped with a configure-time message because their
-third-party/editor dependencies don't exist in the repo (same failure in
-`engine.sln`): `xrLC`/`xrLC_Light` (need NVIDIA `nvDXTlib`) and
-`xrDO_Light`/`xrAI` (need the dropped `editors/` tree).
+`xrCompress`, `xrDXT`, `ETools`, …) on Win32; disable with
+`-DXRAY_BUILD_UTILS=OFF`. The utils are Win32-only (MFC front-ends + 32-bit-era
+assembly) and are skipped automatically in x64 builds. Four tool projects are
+skipped with a configure-time message because their third-party/editor
+dependencies don't exist in the repo (same failure in `engine.sln`): `xrLC`/
+`xrLC_Light` (need NVIDIA `nvDXTlib`) and `xrDO_Light`/`xrAI` (need the
+dropped `editors/` tree).
 
 To install straight into a game folder, point `CMAKE_INSTALL_PREFIX` at the
 game root when configuring, then run `cmake --install`:
@@ -74,7 +79,25 @@ cmake --install build --config Release
 This copies the built `.dll`/`.exe` files into the game's `bin/` directory.
 Every push/PR is also built on GitHub Actions (see `.github/workflows`).
 
-Known build notes:
+### Notes on the 64-bit build
+* **Scripting**: LuaJIT is upgraded from 1.1.4 (x86-only) to **LuaJIT 2.1**
+  (GC64 mode on x64) for *both* architectures. It is a drop-in Lua 5.1 API —
+  mod scripts are unaffected. The DLL keeps the historical
+  `lua.JIT.1.1.4.dll` name; the original 1.1.4 sources remain in
+  `3rd party/luajit` for the legacy solution. The deprecated Lua 5.0/5.1
+  aliases the game scripts rely on (`string.gfind`, `math.mod`,
+  `table.setn`) are restored by the engine at script-system startup.
+* **Physics materials**: some level geometry references material indices past
+  the 60 entries in the shipped `gamemtl.xr` (e.g. 12312). Win32 silently read
+  heap garbage for these; x64 detects the out-of-range index, logs it (at most
+  three times per session) and substitutes the default material.
+* **Crash reporting**: the BugTrap-based crash dialog is 32-bit-only code; x64
+  builds use the simpler built-in handler and write minidumps through
+  Windows Error Reporting instead.
+* **Deploying x64 binaries**: because the renderers bind to `d3dx9_37.dll` /
+  `d3dx10_37.dll`, the 32-bit copies of those DLLs shipping in the game's
+  `bin/` folder must be removed (or replaced by 64-bit ones from the DirectX
+  end-user runtime), otherwise the loader picks up the wrong architecture.
 * `Mixed` builds everything except *xrGame.dll*: its link needs the
   non-virtual `CEnvironment` interface while the Mixed *xrEngine* (built with
   `INGAME_EDITOR`) only exports the virtual one. The stock *.sln* fails the
