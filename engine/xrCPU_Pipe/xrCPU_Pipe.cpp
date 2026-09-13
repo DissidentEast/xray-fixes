@@ -29,9 +29,17 @@ extern xrM44_Mul		xrM44_Mul_x86;
 extern xrM44_Mul		xrM44_Mul_3DNow;
 extern xrM44_Mul		xrM44_Mul_SSE;
 extern xrTransfer		xrTransfer_x86;
+#ifndef _M_AMD64
+// x64 drops the hand-written asm units; their dispatch entries stay NULL
+// (nothing in the CS renderer reads them anyway).
 extern xrMemCopy_8b		xrMemCopy_MMXSSE3DNow;
-extern xrMemCopy_8b		xrMemCopy_x86;
 extern xrMemFill_32b	xrMemFill32_MMX;
+#endif
+extern xrMemCopy_8b		xrMemCopy_x86;
+#ifdef _M_AMD64
+// The plain CopyMemory wrapper lived in the excluded asm unit.
+void	__stdcall	xrMemCopy_x86	(LPVOID dest, const void* src, u32 n)	{ CopyMemory(dest,src,n); }
+#endif
 
 
 extern "C" {
@@ -52,19 +60,27 @@ extern "C" {
 		T->transfer = xrTransfer_x86;
 		T->memCopy	= xrMemCopy_x86;
 		T->memFill	= NULL;
+#ifdef _M_AMD64
+		T->memFill32= NULL;
+#else
 		T->memFill32= xrMemFill32_MMX;
+#endif
 		
 		// SSE
 		if (dwFeatures & _CPU_FEATURE_SSE) {
+#ifndef _M_AMD64
 			T->memCopy	= xrMemCopy_MMXSSE3DNow;
+#endif
 			//T->skin2W	= xrSkin2W_SSE;
 		}
- 
+
 		// 3dnow!
 		if (dwFeatures & _CPU_FEATURE_3DNOW) {
  			//T->skin1W	= xrSkin1W_3DNow;
 			// T->blerp	= xrBoneLerp_3DNow;
+#ifndef _M_AMD64
 			T->memCopy	= xrMemCopy_MMXSSE3DNow;
+#endif
 			//T->skin2W	= xrSkin2W_3DNow;
 		}
 	}

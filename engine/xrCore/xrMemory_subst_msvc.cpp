@@ -25,9 +25,17 @@ ICF	u8*		acc_header			(void* P)	{	u8*		_P		= (u8*)P;	return	_P-1;	}
 ICF	u32		get_header			(void* P)	{	return	(u32)*acc_header(P);				}
 ICF	u32		get_pool			(size_t size)
 {
+#ifdef _M_AMD64
+	// x64: the fixed-size pool allocator corrupts its freelist (bogus heads
+	// crash mem_alloc during FS init), so route everything through the
+	// aligned generic path. The header byte written by mem_alloc then always
+	// reads back mem_generic, keeping mem_free/mem_realloc consistent.
+	return mem_generic;
+#else
 	u32		pid					= u32(size/mem_pools_ebase);
 	if (pid>=mem_pools_count)	return mem_generic;
 	else						return pid;
+#endif
 }
 
 #ifdef PURE_ALLOC
@@ -110,11 +118,11 @@ void*	xrMemory::mem_alloc		(size_t size
 	if		(debug_mode)		dbg_register		(_ptr,size,_name);
 	if (mem_initialized)		debug_cs.Leave		();
 	//if(g_globalCheckAddr==_ptr){
-	//	__asm int 3;
+	//	__debugbreak();
 	//}
 	//if (_name && (0==strcmp(_name,"class ISpatial *")) && (size==376))
 	//{
-	//	__asm int 3;
+	//	__debugbreak();
 	//}
 #endif // DEBUG_MEMORY_MANAGER
 #ifdef USE_MEMORY_MONITOR
@@ -139,7 +147,7 @@ void	xrMemory::mem_free		(void* P)
 
 #ifdef DEBUG_MEMORY_MANAGER
 	if(g_globalCheckAddr==P)
-		__asm int 3;
+		__debugbreak();
 #endif // DEBUG_MEMORY_MANAGER
 
 #ifdef DEBUG_MEMORY_MANAGER
@@ -191,7 +199,7 @@ void*	xrMemory::mem_realloc	(void* P, size_t size
 
 #ifdef DEBUG_MEMORY_MANAGER
 	if(g_globalCheckAddr==P)
-		__asm int 3;
+		__debugbreak();
 #endif // DEBUG_MEMORY_MANAGER
 
 #ifdef DEBUG_MEMORY_MANAGER
@@ -267,7 +275,7 @@ void*	xrMemory::mem_realloc	(void* P, size_t size
 	if (mem_initialized)		debug_cs.Leave	();
 
 	if(g_globalCheckAddr==_ptr)
-		__asm int 3;
+		__debugbreak();
 #endif // DEBUG_MEMORY_MANAGER
 
 	return	_ptr;

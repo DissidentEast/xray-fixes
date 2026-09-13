@@ -6,8 +6,15 @@
 #include "xrdebug.h"
 #include "resource.h"
 #include "dbghelp.h"
- 
-#include "dxerr9.h"
+#include <new.h>
+
+// dxerr9 only exists in the legacy DirectX SDK include tree (used by the
+// 32-bit builds); nothing here calls into it, so include it when available.
+#if defined(__has_include)
+#	if __has_include("dxerr9.h")
+#		include "dxerr9.h"
+#	endif
+#endif
 
 #ifdef __BORLANDC__
 	#include "d3d9.h"
@@ -29,6 +36,23 @@
 #endif
 
 XRCORE_API	xrDebug		Debug;
+
+#ifdef _M_AMD64
+// Kept alive for the engine modules that reference them: xrGame's
+// alife_storage_manager writes g_bug_report_file, xrCore.cpp writes
+// g_application_path — both are defined by the BugTrap-based handler
+// (xrDebugNew.cpp + blackbox) on 32-bit builds.
+XRCORE_API string_path	g_bug_report_file;
+char					g_application_path[256];
+
+void __cdecl _terminate	();
+
+void debug_on_thread_spawn	()
+{
+	_set_abort_behavior				(0,_WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+	std::set_terminate				(_terminate);
+}
+#endif
 
 // Dialog support
 static const char * dlgExpr		= NULL;
@@ -71,6 +95,50 @@ static INT_PTR CALLBACK DialogProc	( HWND hw, UINT msg, WPARAM wp, LPARAM lp )
 	return TRUE;
 }
 
+// x64 stub: the BugTrap handler's stack-trace logger (32-bit only).
+void LogStackTrace	(const char* header)
+{
+	Msg					("%s",header?header:"stack trace");
+}
+
+// Debug builds route every VERIFY/FATAL macro through gather_info before
+// calling fail/backend (the BugTrap-based handler provided it on 32-bit).
+void xrDebug::gather_info	(const char *expression, const char *description, const char *argument0, const char *argument1, const char *file, int line, const char *function, LPSTR assertion_info)
+{
+	LPSTR				buffer = assertion_info;
+	LPCSTR				endline = "\n";
+	LPCSTR				prefix = "[error]";
+	bool				extended_description = (description && !argument0 && strchr(description,'\n'));
+	buffer		+= sprintf(buffer,"%sFATAL ERROR%s%s",endline,endline,endline);
+	buffer		+= sprintf(buffer,"%sExpression    : %s%s",prefix,expression,endline);
+	buffer		+= sprintf(buffer,"%sFunction      : %s%s",prefix,function,endline);
+	buffer		+= sprintf(buffer,"%sFile          : %s%s",prefix,file,endline);
+	buffer		+= sprintf(buffer,"%sLine          : %d%s",prefix,line,endline);
+	if (extended_description) {
+		buffer	+= sprintf(buffer,"%s%s%s",endline,description,endline);
+		if (argument0) {
+			if (argument1) {
+				buffer	+= sprintf(buffer,"%s%s",argument0,endline);
+				buffer	+= sprintf(buffer,"%s%s",argument1,endline);
+			}
+			else
+				buffer	+= sprintf(buffer,"%s%s",argument0,endline);
+		}
+	}
+	else {
+		buffer	+= sprintf(buffer,"%sDescription   : %s%s",prefix,description,endline);
+		if (argument0) {
+			if (argument1) {
+				buffer	+= sprintf(buffer,"%sArgument 0    : %s%s",prefix,argument0,endline);
+				buffer	+= sprintf(buffer,"%sArgument 1    : %s%s",prefix,argument1,endline);
+			}
+			else
+				buffer	+= sprintf(buffer,"%sArgument 0    : %s%s",prefix,argument0,endline);
+		}
+	}
+	(void)buffer;
+}
+
 void xrDebug::backend(const char* reason, const char* expression, const char *argument0, const char *argument1, const char* file, int line, const char *function, bool &ignore_always)
 {
 	static	xrCriticalSection	CS;
@@ -79,14 +147,13 @@ void xrDebug::backend(const char* reason, const char* expression, const char *ar
 
 	// Log
 	string1024			tmp;
-	sprintf				(tmp,"***STOP*** file '%s', line %d.\n***Reason***: %s\n %s",file,line,reason,expression);
+	sprintf				(tmp,"***STOP*** file '%s', line %d.\n***Reason***: %s\n %s\n argument0: %s\n argument1: %s",file,line,reason,expression,argument0?argument0:"",argument1?argument1:"");
 	Msg					(tmp);
 	FlushLog			();
 	if (handler)		handler	();
 
 	// Call the dialog
 	dlgExpr				= reason;
-    sprintf             ()
 	dlgFile				= file;
 	sprintf				(dlgLine,"%d",line);
 	INT_PTR res			= -1;
@@ -153,6 +220,11 @@ void xrDebug::fail		(const char *e1, const char *e2, const char *file, int line,
 	backend		(e1,e2,0,0,file,line,function,ignore_always);
 }
 
+void xrDebug::fail		(const char *e1, const std::string &e2, const char *file, int line, const char *function, bool &ignore_always)
+{
+	backend		(e1,e2.c_str(),0,0,file,line,function,ignore_always);
+}
+
 void xrDebug::fail		(const char *e1, const char *e2, const char *e3, const char *file, int line, const char *function, bool &ignore_always)
 {
 	backend		(e1,e2,e3,0,file,line,function,ignore_always);
@@ -214,12 +286,13 @@ LONG WINAPI UnhandledFilter	( struct _EXCEPTION_POINTERS *pExceptionInfo )
 
 	if (GetModuleFileName( NULL, szDbgHelpPath, _MAX_PATH ))
 	{
-		char *pSlash = strchr( szDbgHelpPath, '\\' );
-		if (pSlash)
-		{
-			strcpy_s	(pSlash+1, "DBGHELP.DLL" );
-			hDll = ::LoadLibrary( szDbgHelpPath );
-		}
+			char *pSlash = strchr( szDbgHelpPath, '\\' );
+			if (pSlash)
+			{
+				size_t	remaining	= sizeof(szDbgHelpPath) - size_t(pSlash + 1 - szDbgHelpPath);
+				strcpy_s	(pSlash+1, remaining, "DBGHELP.DLL" );
+				hDll = ::LoadLibrary( szDbgHelpPath );
+			}
 	}
 
 	if (hDll==NULL)
@@ -330,17 +403,12 @@ namespace std{
         ::SetUnhandledExceptionFilter	( UnhandledFilter );	// exception handler to all "unhandled" exceptions
     }
 #else
-    typedef int		(__cdecl * _PNH)( size_t );
-    _CRTIMP int		__cdecl _set_new_mode( int );
-    _CRTIMP _PNH	__cdecl _set_new_handler( _PNH );
-
     void	xrDebug::_initialize		(const bool &dedicated)
     {
 		handler							= 0;
-        _set_new_mode					(1);					// gen exception if can't allocate memory
+		_set_new_mode					(1);					// gen exception if can't allocate memory
         _set_new_handler				(_out_of_memory	);		// exception-handler for 'out of memory' condition
-		std::set_terminate				(_terminate);
-		std::set_unexpected				(_terminate);
+		std::set_terminate				(_terminate);			// std::set_unexpected is gone in C++17
         ::SetUnhandledExceptionFilter	( UnhandledFilter );	// exception handler to all "unhandled" exceptions
     }
 

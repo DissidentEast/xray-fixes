@@ -33,6 +33,20 @@ static BOOL SecuROM_Tripwire()
 }
 #endif // 0
 
+#ifdef _M_X64
+// The SecuROM markers are byte patterns only meaningful to the DRM packer;
+// in an unpacked binary they are dead weight, and MSVC x64 has no inline asm
+// anyway. The ON/OFF pair intentionally leaves one compound scope open
+// (locals live inside it), so the stubs keep that brace balance.
+#define SECUROM_MARKER_PERFORMANCE_ON(id)	{
+#define SECUROM_MARKER_PERFORMANCE_OFF(id)	}
+#define SECUROM_MARKER_SECURITY_ON(id)		{
+#define SECUROM_MARKER_SECURITY_OFF(id)		}
+#define SECUROM_MARKER_HIGH_SECURITY_ON(id)	{
+#define SECUROM_MARKER_HIGH_SECURITY_OFF(id)	}
+// Unused anywhere in the engine; label addresses have no portable form.
+#define SET_LABEL_ADDR(param, label_addr)	{ (param) = 0; }
+#else
 #define SECUROM_MARKER_PERFORMANCE_ON(id) { { __asm _emit 0xEB __asm _emit 0x0E __asm _emit 'M' __asm _emit 'a' __asm _emit '0' __asm _emit 'W' __asm _emit 'y' __asm _emit 'G' __asm _emit '1' __asm _emit 'k' __asm _emit 'm' __asm _emit 0x01 __asm _emit (id & 0xFF) __asm _emit ((id >> 8) & 0xFF) __asm _emit ((id >> 16) & 0xFF) __asm _emit ((id >> 24) & 0xFF) }
 #define SECUROM_MARKER_PERFORMANCE_OFF(id) { __asm _emit 0xEB __asm _emit 0x0E __asm _emit 'M' __asm _emit 'a' __asm _emit '0' __asm _emit 'W' __asm _emit 'y' __asm _emit 'G' __asm _emit '1' __asm _emit 'k' __asm _emit 'm' __asm _emit 0x02 __asm _emit (id & 0xFF) __asm _emit ((id >> 8) & 0xFF) __asm _emit ((id >> 16) & 0xFF) __asm _emit ((id >> 24) & 0xFF) } }
 
@@ -49,6 +63,7 @@ static BOOL SecuROM_Tripwire()
 			__asm _emit (id & 0xFF) __asm _emit ((id >> 8) & 0xFF) __asm _emit ((id >> 16) & 0xFF) __asm _emit ((id >> 24) & 0xFF)  \
 			__asm push offset code \
 			__asm push offset data }
+#endif // _M_X64
 
 
 static unsigned char MACRO_ADD[] =
@@ -140,12 +155,14 @@ typedef struct
 } VirtualMachine_t;
 #pragma pack(pop)
 
+#ifndef _M_X64
 #define SET_LABEL_ADDR(param, label_addr) \
 	{ \
 		DWORD addr; \
 		__asm { mov addr, offset label_addr } \
 		param = addr; \
 	}
+#endif
 
 
 #endif

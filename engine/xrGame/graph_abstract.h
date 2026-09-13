@@ -45,7 +45,9 @@ public:
 
 private:
 	VERTICES					m_vertices;
-	u32							m_edge_count;
+	// size_t (not u32): CVertex's constructor takes a size_t* to this
+	// counter, which only type-matches on 64-bit if the member is one.
+	size_t						m_edge_count;
 
 public:
 	IC									CGraphAbstract	();

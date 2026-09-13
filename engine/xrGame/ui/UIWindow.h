@@ -2,7 +2,10 @@
 #include "../xr_level_controller.h"
 class CUIWindow;
 
-struct _12b	{ DWORD _[3]; };
+// Three pointers, not three DWORDs: the pool element must stay wide
+												// enough for a std::_List_node<CUIWindow*,void*> (3 pointers),
+												// which is 24 bytes on x64 vs 12 on x86.
+struct _12b	{ void* _[3]; };
 extern poolSS< _12b, 128>	ui_allocator;
 
 

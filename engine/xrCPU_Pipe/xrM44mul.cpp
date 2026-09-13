@@ -1,5 +1,25 @@
 #include "stdafx.h"
 
+#ifdef _M_AMD64
+// MSVC x64 has no inline asm. The x87 original computes D = M1^T * M2 with
+// every destination row reusing the M2 column held in the x87 stack; the
+// double accumulator below mirrors its 80-bit intermediate precision.
+void	__stdcall	xrM44_Mul_x86	(_matrix<float>* pfD, _matrix<float>* pfM1, _matrix<float>* pfM2)
+{
+	const _matrix<float>&	M1	= *pfM1;
+	const _matrix<float>&	M2	= *pfM2;
+	_matrix<float>&			D	= *pfD;
+
+	for (int i = 0; i < 4; ++i)
+		for (int j = 0; j < 4; ++j)
+		{
+			double	acc	= 0.0;
+			for (int r = 0; r < 4; ++r)
+				acc	+= double(M1.m[r][i]) * double(M2.m[r][j]);
+			D.m[i][j]	= float(acc);
+		}
+}
+#else
 void	__stdcall	xrM44_Mul_x86	(_matrix<float>* pfD, _matrix<float>* pfM1, _matrix<float>* pfM2)
 {
     __asm
@@ -250,3 +270,4 @@ void	__stdcall	xrM44_Mul_x86	(_matrix<float>* pfD, _matrix<float>* pfM1, _matrix
         pop         edx
     }
 }
+#endif // _M_AMD64

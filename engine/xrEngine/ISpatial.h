@@ -105,7 +105,9 @@ public:
 class ENGINE_API				ISpatial_NODE
 {
 public:
-	typedef	_W64 unsigned		ptrt;
+	// Pointer-sized so the _empty() pointer test stays correct on 64-bit
+	// (the old `_W64 unsigned` truncated pointers on x64).
+	typedef		size_t				ptrt;
 public:
 	ISpatial_NODE*				parent;					// parent node for "empty-members" optimization
 	ISpatial_NODE*				children		[8];	// children nodes

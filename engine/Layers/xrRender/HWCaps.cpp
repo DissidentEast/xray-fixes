@@ -13,6 +13,15 @@ namespace
 {
 
 #ifndef _EDITOR
+
+#ifdef _M_X64
+// The vendored nvapi.lib (2007) is x86-only; on x64 report a single GPU.
+// SLI/MPGPU detection can be restored by vendoring a modern 64-bit nvapi.
+u32 GetNVGpuNum()
+{
+	return 1;
+}
+#else
 u32 GetNVGpuNum()
 {
 	NvLogicalGpuHandle  logicalGPUs[NVAPI_MAX_LOGICAL_GPUS];
@@ -68,6 +77,7 @@ u32 GetNVGpuNum()
 
 	return iGpuNum;
 }
+#endif // _M_X64
 
 u32 GetATIGpuNum()
 {

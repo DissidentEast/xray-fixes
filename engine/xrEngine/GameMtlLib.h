@@ -309,7 +309,17 @@ public:
 	// game
 	IC u16				GetMaterialIdx	(int ID)		{GameMtlIt it=GetMaterialItByID(ID);VERIFY(materials.end() != it); return (u16)(it-materials.begin());}
 	IC u16				GetMaterialIdx	(LPCSTR name)	{GameMtlIt it=GetMaterialIt(name);VERIFY(materials.end() != it); return (u16)(it-materials.begin());}
-	IC SGameMtl*		GetMaterialByIdx(u16 idx)		{VERIFY(idx<materials.size()); return materials[idx];}
+	IC SGameMtl*		GetMaterialByIdx(u16 idx)		{
+													// x64 hardening: level geometry can reference material indices past
+													// the shipped gamemtl.xr (60 entries); Win32 silently read heap
+													// garbage here, x64 reads zeroed slack and crashes. Log only the
+													// first few occurrences to avoid console spam.
+													if (idx>=materials.size()) {
+														static u32 warn_count = 0;
+														if (warn_count<3) { Msg("! [MTL] material idx %d out of range (%d loaded), using default", (int)idx, (int)materials.size()); ++warn_count; }
+														return materials.empty()?NULL:materials[0];
+													}
+													return materials[idx];}
 	IC SGameMtl*		GetMaterialByID (s32 id)		{return GetMaterialByIdx(GetMaterialIdx(id));}
 #endif
 

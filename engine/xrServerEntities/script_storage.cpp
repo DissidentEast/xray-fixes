@@ -282,6 +282,30 @@ void CScriptStorage::reinit	()
 #endif // #ifndef DEBUG
 	}
 
+	// LuaJIT 2.x dropped the deprecated Lua 5.0/5.1 aliases that LuaJIT 1.1.4
+	// still provided and the game scripts rely on; restore them (these are
+	// the same compatibility names Lua 5.1 itself kept).
+	lua_getglobal		(lua(), LUA_STRLIBNAME);
+	if (lua_istable		(lua(), -1)) {
+		lua_getfield	(lua(), -1, "gmatch");
+		lua_setfield	(lua(), -2, "gfind");		// string.gfind = string.gmatch
+	}
+	lua_pop				(lua(), 1);
+
+	lua_getglobal		(lua(), LUA_MATHLIBNAME);
+	if (lua_istable		(lua(), -1)) {
+		lua_getfield	(lua(), -1, "fmod");
+		lua_setfield	(lua(), -2, "mod");			// math.mod = math.fmod
+	}
+	lua_pop				(lua(), 1);
+
+	lua_getglobal		(lua(), LUA_TABLIBNAME);
+	if (lua_istable		(lua(), -1)) {
+		lua_pushcclosure(lua(), +[](lua_State* L) -> int { return 0; }, 0);
+		lua_setfield	(lua(), -2, "setn");		// table.setn = deprecated no-op
+	}
+	lua_pop				(lua(), 1);
+
 	if (strstr(Core.Params,"-_g"))
 		file_header			= file_header_new;
 	else
@@ -489,6 +513,13 @@ bool CScriptStorage::load_buffer	(lua_State *L, LPCSTR caBuffer, size_t tSize, L
 #ifdef DEBUG
 		print_output	(L,caScriptName,l_iErrorCode);
 #endif
+		// x64 diagnostics: compile failures were silent in Release builds.
+		Msg				("! [LUA] Cannot compile script \"%s\": %s", caScriptName, lua_tostring(L,-1) ? lua_tostring(L,-1) : "<no message>");
+		{	// x64 diagnostics: dump the failing script (raw gamedata text) so
+			// it can be fixed and dropped as a loose gamedata override.
+			FILE*			f = fopen("failing_script_dump.script", "wb");
+			if (f) { fwrite(caBuffer, 1, tSize, f); fclose(f); }
+		}
 		on_error		(L);
 		return			(false);
 	}
@@ -544,6 +575,8 @@ bool CScriptStorage::do_file	(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 #ifdef DEBUG
 		print_output(lua(),caScriptName,l_iErrorCode);
 #endif
+		// x64 diagnostics: runtime script errors were silent in Release builds.
+		Msg				("! [LUA] Error running script \"%s\": %s", caScriptName, lua_tostring(lua(),-1) ? lua_tostring(lua(),-1) : "<no message>");
 		on_error	(lua());
 		lua_settop	(lua(),start);
 		return		(false);

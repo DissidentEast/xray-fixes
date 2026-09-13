@@ -12,6 +12,11 @@
 #include "../xrEngine/motion.h"
 #include "ai_debug.h"
 #include "ai/stalker/ai_stalker.h"
+#include "stalker_movement_manager_smart_cover.h"
+#include "inventory.h"
+#include "weapon.h"
+#include "missile.h"
+#include "stalker_animation_manager_impl.h" // x64: __forceinline standing() needs a visible body here, else LNK2019
 #include "ai/ai_monsters_anims.h"
 #include "animation_movement_controller.h"
 #ifdef	DEBUG
