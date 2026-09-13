@@ -1,5 +1,8 @@
 build/
+build-x64/
 bin/*.pdb
+.vs/
+.zcode/
 engine/.vs/
 
 *.tlog

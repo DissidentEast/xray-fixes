@@ -29,6 +29,10 @@ target_compile_definitions(minizip PRIVATE
   $<$<CONFIG:Debug>:DEBUG> $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 
 # BugTrap (shared) — PCH stdafx.h; Debug binary is BugTrapD.dll per vcxproj.
+# Win32-only: this 2008-era copy is x86 code through and through (inline asm,
+# x86 CONTEXT register names, GWL_USERDATA). x64 builds skip it entirely —
+# xrCore then uses the plain xrDebug.cpp handler and links no BugTrap.
+if(NOT XRAY_64BIT)
 file(GLOB BUGTRAP_SRCS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/bugtrap/bugtrap/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/bugtrap/bugtrap/*.h"
@@ -46,6 +50,7 @@ target_compile_definitions(BugTrap PRIVATE
   $<$<CONFIG:Debug>:DEBUG> $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 target_link_libraries(BugTrap PRIVATE minizip zlib ws2_32 comctl32 shlwapi version wininet)
 target_compile_options(BugTrap PRIVATE /W4)
+endif()
 
 # ODE physics (shared, dSINGLE) — no PCH; ships with msvcdefs.def.
 file(GLOB ODE_SRCS CONFIGURE_DEPENDS
@@ -120,19 +125,94 @@ target_compile_definitions(crypto PRIVATE
   CRYPTO_BUILD _CRT_SECURE_NO_WARNINGS _MBCS
   $<$<OR:$<CONFIG:Debug>,$<CONFIG:Mixed>>:DEBUG;CRYPTO_AS_SHARED_LIBRARY>)
 
-# LuaJIT 1.1.4 (shared, output lua.JIT.1.1.4.dll) — no PCH.
-file(GLOB LUAJIT_SRCS CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/luajit/src/*.c"
-  "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/luajit/src/*.h")
-list(FILTER LUAJIT_SRCS EXCLUDE REGEX "/(lua|luac|print)\\.c$")
-add_library(luajit SHARED ${LUAJIT_SRCS})
+# LuaJIT 2.1 (shared, keeps the historical lua.JIT.1.1.4 output name).
+# The old "3rd party/luajit" tree holds the x86-only 1.1.4 sources and stays
+# for the legacy engine.sln; the CMake build uses the vendored 2.1 for both
+# architectures (x64 runs the GC64 mode that this 2.1 defaults to).
+# Consumers must resolve <lua/*.h> from XRAY_LUA_INCLUDE_DIR (prepended ahead
+# of SDK/include) so they see the 2.1 API instead of SDK/include/lua.
+set(XRAY_LUAJIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/LuaJIT-2.1")
+set(XRAY_LUA_INCLUDE_DIR "${XRAY_LUAJIT_DIR}/include")
+
+set(XRAY_LJ_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${XRAY_LJ_GEN_DIR}")
+
+# Host interpreter used to run DynASM during the build.
+add_executable(minilua "${XRAY_LUAJIT_DIR}/src/host/minilua.c")
+
+# DynASM turns vm_x{86,64}.dasc into buildvm_arch.h. GC64 is baked into
+# vm_x64.dasc (the rolling 2.1 default for x64); Win32 uses the classic
+# x86 backend. Flags mirror src/msvcbuild.bat.
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+  set(XRAY_DASM_DASC "${XRAY_LUAJIT_DIR}/src/vm_x64.dasc")
+  set(XRAY_DASM_FLAGS -D WIN -D JIT -D FFI -D ENDIAN_LE -D FPU -D P64)
+else()
+  set(XRAY_DASM_DASC "${XRAY_LUAJIT_DIR}/src/vm_x86.dasc")
+  set(XRAY_DASM_FLAGS -D WIN -D JIT -D FFI -D ENDIAN_LE -D FPU)
+endif()
+set(XRAY_BUILDVM_ARCH_H "${XRAY_LJ_GEN_DIR}/buildvm_arch.h")
+add_custom_command(OUTPUT "${XRAY_BUILDVM_ARCH_H}"
+  COMMAND minilua "${XRAY_LUAJIT_DIR}/dynasm/dynasm.lua" -LN ${XRAY_DASM_FLAGS}
+          -o "${XRAY_BUILDVM_ARCH_H}" "${XRAY_DASM_DASC}"
+  DEPENDS minilua "${XRAY_DASM_DASC}"
+  COMMENT "DynASM: generating buildvm_arch.h")
+
+# Host code generator: emits the VM assembly object and the internal headers
+# (lj_bcdef.h et al) that the library sources #include. Its own arch (and thus
+# the LUAJIT_TARGET that lj_arch.h picks) matches the build architecture.
+file(GLOB XRAY_BUILDVM_SRCS CONFIGURE_DEPENDS "${XRAY_LUAJIT_DIR}/src/host/*.c")
+list(FILTER XRAY_BUILDVM_SRCS EXCLUDE REGEX "/minilua\\.c$")
+add_executable(buildvm ${XRAY_BUILDVM_SRCS} "${XRAY_BUILDVM_ARCH_H}")
+target_include_directories(buildvm PRIVATE
+  "${XRAY_LJ_GEN_DIR}" "${XRAY_LUAJIT_DIR}/src" "${XRAY_LUAJIT_DIR}/src/host"
+  "${XRAY_LUAJIT_DIR}/dynasm")
+# Host build tools must not ship with the game runtime; keep them out of bin/.
+foreach(_t minilua buildvm)
+  foreach(_cfg DEBUG MIXED RELEASE)
+    set_target_properties(${_t} PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY_${_cfg} "${CMAKE_BINARY_DIR}/tools/$<CONFIG>")
+  endforeach()
+endforeach()
+
+set(XRAY_LJ_GEN_HEADERS)
+# The ALL_LIB list from msvcbuild.bat — inputs for the buildvm libdef modes.
+set(XRAY_LUAJIT_LIB_SRCS)
+foreach(_l base math bit string table io os package debug jit ffi buffer)
+  list(APPEND XRAY_LUAJIT_LIB_SRCS "${XRAY_LUAJIT_DIR}/src/lib_${_l}.c")
+endforeach()
+# The libdef modes scan the library sources (ALL_LIB list from msvcbuild.bat);
+# folddef is generated from the optimizer, peobj has no inputs.
+foreach(_gen bcdef ffdef libdef recdef)
+  set(_out "${XRAY_LJ_GEN_DIR}/lj_${_gen}.h")
+  add_custom_command(OUTPUT "${_out}"
+    COMMAND buildvm -m ${_gen} -o "${_out}" ${XRAY_LUAJIT_LIB_SRCS}
+    DEPENDS buildvm ${XRAY_LUAJIT_LIB_SRCS}
+    COMMENT "buildvm -m ${_gen}")
+  list(APPEND XRAY_LJ_GEN_HEADERS "${_out}")
+endforeach()
+set(_out "${XRAY_LJ_GEN_DIR}/lj_folddef.h")
+add_custom_command(OUTPUT "${_out}"
+  COMMAND buildvm -m folddef -o "${_out}"
+          "${XRAY_LUAJIT_DIR}/src/lj_opt_fold.c"
+  DEPENDS buildvm "${XRAY_LUAJIT_DIR}/src/lj_opt_fold.c"
+  COMMENT "buildvm -m folddef")
+list(APPEND XRAY_LJ_GEN_HEADERS "${_out}")
+set(XRAY_LJ_VM_OBJ "${XRAY_LJ_GEN_DIR}/lj_vm.obj")
+add_custom_command(OUTPUT "${XRAY_LJ_VM_OBJ}"
+  COMMAND buildvm -m peobj -o "${XRAY_LJ_VM_OBJ}"
+  DEPENDS buildvm
+  COMMENT "buildvm -m peobj (lj_vm)")
+
+file(GLOB XRAY_LUAJIT_SRCS CONFIGURE_DEPENDS "${XRAY_LUAJIT_DIR}/src/*.c")
+list(FILTER XRAY_LUAJIT_SRCS EXCLUDE REGEX "/(luajit|luac|ljamalg)\\.c$")
+add_library(luajit SHARED ${XRAY_LUAJIT_SRCS} ${XRAY_LJ_GEN_HEADERS} "${XRAY_LJ_VM_OBJ}")
 set_target_properties(luajit PROPERTIES OUTPUT_NAME "lua.JIT.1.1.4")
 target_include_directories(luajit PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/luajit/dynasm"
-  "${XRAY_SDK_INCLUDE_DIR}" "${XRAY_ENGINE_DIR}/Include")
-target_compile_definitions(luajit PRIVATE
-  WIN32 _MBCS
-  $<$<OR:$<CONFIG:Debug>,$<CONFIG:Mixed>>:DEBUG> $<$<CONFIG:Release>:NDEBUG>)
+  "${XRAY_LJ_GEN_DIR}" "${XRAY_LUAJIT_DIR}/src" "${XRAY_LUA_INCLUDE_DIR}"
+  "${XRAY_SDK_INCLUDE_DIR}")
+# LUA_LIB + LUA_BUILD_AS_DLL give the public API dllexport (see the shim in
+# include/lua/luaconf.h, which makes consumers compile it as dllimport).
+target_compile_definitions(luajit PRIVATE LUA_BUILD_AS_DLL LUA_LIB _CRT_SECURE_NO_WARNINGS)
 
 # luabind (shared, output luabind.beta7-devel.rc4.dll) — PCH pch.h.
 file(GLOB LUABIND_SRCS CONFIGURE_DEPENDS
@@ -141,7 +221,8 @@ file(GLOB LUABIND_SRCS CONFIGURE_DEPENDS
 add_library(luabind SHARED ${LUABIND_SRCS})
 set_target_properties(luabind PROPERTIES OUTPUT_NAME "luabind.beta7-devel.rc4")
 target_include_directories(luabind PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/luabind" "${XRAY_SDK_INCLUDE_DIR}")
+  "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/luabind" "${XRAY_LUA_INCLUDE_DIR}"
+  "${XRAY_SDK_INCLUDE_DIR}")
 target_precompile_headers(luabind PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/3rd party/luabind/pch.h")
 target_compile_definitions(luabind PRIVATE
@@ -218,6 +299,11 @@ set_target_properties(ogg vorbis vorbisfile PROPERTIES DEBUG_POSTFIX "_d")
 file(GLOB THEORA_SRCS CONFIGURE_DEPENDS
   "${XRAY_SDK_DIR}/sources/libtheora-1.1.1/lib/*.c"
   "${XRAY_SDK_DIR}/sources/libtheora-1.1.1/lib/x86_vc/*.c")
+if(XRAY_64BIT)
+  # lib/x86_vc is MSVC 32-bit inline assembly (MMX/simd via OC_X86_ASM); x64
+  # compiles the pure-C decoder path (encoder is disabled either way).
+  list(FILTER THEORA_SRCS EXCLUDE REGEX "/x86_vc/")
+endif()
 list(FILTER THEORA_SRCS EXCLUDE REGEX "encoder_disabled\\.c$")
 add_library(theora STATIC ${THEORA_SRCS})
 set_target_properties(theora PROPERTIES OUTPUT_NAME "libtheora_static")
@@ -232,7 +318,8 @@ target_include_directories(theora PRIVATE
 target_compile_definitions(theora PRIVATE
   _CRT_SECURE_NO_DEPRECATE _CRT_NONSTDC_NO_DEPRECATE
   _BIND_TO_CURRENT_CRT_VERSION
-  WIN32 _WINDOWS _USRDLL LIBTHEORA_EXPORTS OC_X86_ASM
+  WIN32 _WINDOWS _USRDLL LIBTHEORA_EXPORTS
+  $<$<EQUAL:${CMAKE_SIZEOF_VOID_P},4>:OC_X86_ASM>
   $<$<OR:$<CONFIG:Debug>,$<CONFIG:Mixed>>:_DEBUG;DEBUG> $<$<CONFIG:Release>:NDEBUG>)
 target_link_libraries(theora PRIVATE ogg)
 
@@ -255,7 +342,9 @@ target_compile_definitions(oalib PRIVATE
 foreach(_t IN ITEMS
     zlib minizip BugTrap ode openal32 jpeg luajit luabind
     ogg vorbis vorbisfile vorbisenc theora oalib)
-  target_compile_options(${_t} PRIVATE /EHsc)
+  if(TARGET ${_t}) # BugTrap is Win32-only (see above)
+    target_compile_options(${_t} PRIVATE /EHsc)
+  endif()
 endforeach()
 
 # ------------------------------------------------------------------ engine ---
@@ -291,10 +380,21 @@ file(GLOB_RECURSE XRCORE_SRCS CONFIGURE_DEPENDS
 list(FILTER XRCORE_SRCS EXCLUDE REGEX "LocatorAPI_Notifications|/xrDebug\\.cpp$")
 # Files present on disk but not part of the vcxproj build.
 list(FILTER XRCORE_SRCS EXCLUDE REGEX "/(ELocatorAPI|lzo1x_d3|rt_lzo)\\.cpp$")
-# DiagAssert is Debug-only in the vcxproj: keep it Debug-only here too.
-list(FILTER XRCORE_SRCS EXCLUDE REGEX "blackbox/DiagAssert\\.cpp$")
-list(APPEND XRCORE_SRCS
-  "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/xrCore/blackbox/DiagAssert.cpp>")
+if(XRAY_64BIT)
+  # 64-bit: the blackbox/BugTrap crash reporter is x86-only (inline asm, x86
+  # CONTEXT registers, GWL_USERDATA), so xrDebugNew.cpp is replaced by the
+  # plain xrDebug.cpp handler (it already carries _M_AMD64 guards). Windows
+  # Error Reporting still collects dumps. Porting blackbox's x64 stack walk
+  # via dbghelp is a self-contained follow-up.
+  list(FILTER XRCORE_SRCS EXCLUDE REGEX "LocatorAPI_Notifications|/xrDebugNew\\.cpp$|/blackbox/")
+  list(APPEND XRCORE_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/xrCore/xrDebug.cpp")
+else()
+  list(FILTER XRCORE_SRCS EXCLUDE REGEX "LocatorAPI_Notifications|/xrDebug\\.cpp$")
+  # DiagAssert is Debug-only in the vcxproj: keep it Debug-only here too.
+  list(FILTER XRCORE_SRCS EXCLUDE REGEX "blackbox/DiagAssert\\.cpp$")
+  list(APPEND XRCORE_SRCS
+    "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/xrCore/blackbox/DiagAssert.cpp>")
+endif()
 add_library(xrCore SHARED ${XRCORE_SRCS})
 target_include_directories(xrCore PRIVATE "${XRAY_SDK_INCLUDE_DIR}")
 target_precompile_headers(xrCore PRIVATE
@@ -320,7 +420,9 @@ target_compile_definitions(xrCore PRIVATE
   WIN32 _WINDOWS _USRDLL XRCORE_EXPORTS _SECURE_SCL=0 _MBCS
   $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Mixed>:MIXED;DEBUG>
   $<$<CONFIG:Release>:NDEBUG>)
-target_link_libraries(xrCore PRIVATE BugTrap)
+if(NOT XRAY_64BIT)
+  target_link_libraries(xrCore PRIVATE BugTrap)
+endif()
 target_compile_options(xrCore PRIVATE /W4)
 
 # xrCDB (shared) — PCH stdafx.h. cl_raypick.cpp is ExcludedFromBuild in every
@@ -347,6 +449,13 @@ target_compile_options(xrCDB PRIVATE /W4)
 file(GLOB XRCPUPIPE_SRCS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/xrCPU_Pipe/*")
 list(FILTER XRCPUPIPE_SRCS EXCLUDE REGEX "/(xrBoneLerp(_3DNow!)?|xrSkin[12]W_(3DNow!|SSE))\\.cpp$")
+if(XRAY_64BIT)
+  # 3DNow! has no x64 encoding; x64 runs the SSE2/C baseline paths instead.
+  # Every hand-written asm unit goes (including the MMX memcopy/memfill
+  # helpers, whose dispatch entries become NULL — nothing in the CS renderer
+  # reads them).
+  list(FILTER XRCPUPIPE_SRCS EXCLUDE REGEX "/(xrM44mul_3DNow!|3DNow!Lib|xrMemCopy8_3DNow!|xrMemFill32_3DNow!)\\.cpp$")
+endif()
 add_library(xrCPU_Pipe SHARED ${XRCPUPIPE_SRCS})
 target_include_directories(xrCPU_Pipe PRIVATE
   "${XRAY_SDK_INCLUDE_DIR}/stlport" "${XRAY_SDK_INCLUDE_DIR}")
@@ -453,7 +562,12 @@ target_compile_definitions(xrSound PRIVATE
   $<$<CONFIG:Release>:NDEBUG>)
 target_link_libraries(xrSound PRIVATE xrCore xrCDB openal32 vorbisfile vorbis ogg)
 # stdafx.cpp does `#pragma comment(lib, "eax.lib")` (EAX SDK, prebuilt).
-target_link_libraries(xrSound PRIVATE "${XRAY_SDK_LIB_DIR}/eax.lib")
+# Win32-only import lib; the EAX calls themselves resolve at runtime through
+# alGetProcAddress("EAXSet"/"EAXGet") off the OpenAL router, so x64 works
+# without it (the lib is effectively unreferenced even on Win32).
+if(NOT XRAY_64BIT)
+  target_link_libraries(xrSound PRIVATE "${XRAY_SDK_LIB_DIR}/eax.lib")
+endif()
 target_compile_options(xrSound PRIVATE /W4)
 
 # xrAPI (shared) — PCH stdafx.h; vcxproj is Debug/Release only. The .sln maps
@@ -540,6 +654,7 @@ foreach(RENDER R1 R2 R3)
     "${CMAKE_CURRENT_SOURCE_DIR}/xrEngine/ai_script_lua_extension.cpp")
   add_library("xrRender_${RENDER}" SHARED ${XRRENDER_SRCS})
   target_include_directories("xrRender_${RENDER}" PRIVATE
+    "${XRAY_LUA_INCLUDE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/Layers/xrRenderPC_${RENDER}"
     "${XRAY_SDK_INCLUDE_DIR}/dx"
     "${XRAY_SDK_INCLUDE_DIR}/stlport" "${XRAY_SDK_INCLUDE_DIR}")
@@ -557,29 +672,49 @@ foreach(RENDER R1 R2 R3)
   target_link_libraries("xrRender_${RENDER}" PRIVATE xrEngine xrParticles xrAPI)
   target_compile_options("xrRender_${RENDER}" PRIVATE /W4)
   # The prebuilt nvapi.lib (2007-era) has no SAFESEH handlers; the vcxproj
-  # links renders without SAFESEH as well.
-  target_link_options("xrRender_${RENDER}" PRIVATE /SAFESEH:NO)
+  # links renders without SAFESEH as well. /SAFESEH is a Win32-only flag.
+  target_link_options("xrRender_${RENDER}" PRIVATE
+    $<$<EQUAL:${CMAKE_SIZEOF_VOID_P},4>:/SAFESEH:NO>)
+  if(XRAY_64BIT)
+    # x64 import lib generated from the system d3dx9_37.dll; on Win32 the
+    # renders resolve d3dx9.lib via #pragma comment(lib, ...) as before.
+    target_link_libraries("xrRender_${RENDER}" PRIVATE
+      "${XRAY_SDK_LIB_DIR}/x64/d3dx9.lib")
+  endif()
 endforeach()
 
 # Per-renderer extras (defines + prebuilt/SDK libs), matching the vcxproj files.
 if(TARGET xrRender_R1)
   target_compile_definitions(xrRender_R1 PRIVATE
     $<$<CONFIG:Debug>:_ALLOW_RTCc_IN_STL>)
-  target_link_libraries(xrRender_R1 PRIVATE
-    "${XRAY_SDK_LIB_DIR}/nvapi.lib"
-    $<$<NOT:$<CONFIG:Debug>>:${XRAY_SDK_LIB_DIR}/atimgpud_mtdll_x86.lib>)
+  if(NOT XRAY_64BIT)
+    # x86-only prebuilt libs; HWCaps.cpp stubs their GPU-cap calls on x64.
+    target_link_libraries(xrRender_R1 PRIVATE
+      "${XRAY_SDK_LIB_DIR}/nvapi.lib"
+      $<$<NOT:$<CONFIG:Debug>>:${XRAY_SDK_LIB_DIR}/atimgpud_mtdll_x86.lib>)
+  endif()
 endif()
 if(TARGET xrRender_R2)
   target_compile_definitions(xrRender_R2 PRIVATE
     $<$<CONFIG:Debug>:USE_RESOURCE_DEBUGGER>)
-  target_link_libraries(xrRender_R2 PRIVATE "${XRAY_SDK_LIB_DIR}/nvapi.lib")
+  if(NOT XRAY_64BIT)
+    target_link_libraries(xrRender_R2 PRIVATE "${XRAY_SDK_LIB_DIR}/nvapi.lib")
+  endif()
 endif()
 if(TARGET xrRender_R3)
   target_compile_definitions(xrRender_R3 PRIVATE
     USE_DX10
     $<$<CONFIG:Debug>:MSAA_DX10_1;MSAA_SAMPLES=4;USE_MSAA;GBUFFER_OPTIMIZATION>)
-  target_link_libraries(xrRender_R3 PRIVATE
-    d3d10 "${XRAY_SDK_LIB_DIR}/d3dx10.lib" dxgi "${XRAY_SDK_LIB_DIR}/nvapi.lib")
+  if(NOT XRAY_64BIT)
+    target_link_libraries(xrRender_R3 PRIVATE
+      d3d10 "${XRAY_SDK_LIB_DIR}/d3dx10.lib" dxgi "${XRAY_SDK_LIB_DIR}/nvapi.lib")
+  else()
+    # x64: d3dx10 import lib generated from the system x64 d3dx10_37.dll — the
+    # same DLL name the 32-bit SDK lib imports (SDK/libraries/x64/d3dx10.lib);
+    # nvapi is stubbed in HWCaps.cpp on x64.
+    target_link_libraries(xrRender_R3 PRIVATE
+      d3d10 "${XRAY_SDK_LIB_DIR}/x64/d3dx10.lib" dxgi)
+  endif()
 endif()
 
 # xrGame (shared) — PCH stdafx.h for gameplay code; xrServerEntities objects
@@ -611,6 +746,7 @@ list(APPEND XRSCRIPT_SRCS
   "$<$<OR:$<CONFIG:Debug>,$<CONFIG:Mixed>>:${CMAKE_CURRENT_SOURCE_DIR}/xrServerEntities/script_stack_tracker.cpp>")
 add_library(xrGame SHARED ${XRGAME_SRCS} ${XRSCRIPT_SRCS})
 target_include_directories(xrGame PRIVATE
+  "${XRAY_LUA_INCLUDE_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/xrGame"
   "${CMAKE_CURRENT_SOURCE_DIR}/xrServerEntities"
   "${XRAY_SDK_INCLUDE_DIR}/stlport" "${XRAY_SDK_INCLUDE_DIR}")
@@ -649,12 +785,19 @@ file(GLOB_RECURSE XRENGINE_SRCS CONFIGURE_DEPENDS
 list(FILTER XRENGINE_SRCS EXCLUDE REGEX "editor_environment_manager_properties\\.cpp$")
 # xrLoadSurface.cpp exists on disk but is in no vcxproj config.
 list(FILTER XRENGINE_SRCS EXCLUDE REGEX "/xrLoadSurface\\.cpp$")
+if(XRAY_64BIT)
+  # MMX YUV->RGB helper: MSVC x64 has no inline asm and the MMX path is
+  # already disabled at the call site (MMX_TV_YUV2ARGB is #undef'd), so the
+  # scalar branch of CTheoraSurface::DecompressFrame is used on x64.
+  list(FILTER XRENGINE_SRCS EXCLUDE REGEX "/xrTheora_Surface_mmx\\.cpp$")
+endif()
 add_executable(xrEngine WIN32 ${XRENGINE_SRCS})
 # xrEngine.exe exports the engine API (ENGINE_API) and game/render DLLs link
 # its import library. ENABLE_EXPORTS makes CMake pass xrEngine.lib by full
 # path to dependents (otherwise they get a bare name that is not on LIBPATH).
 set_target_properties(xrEngine PROPERTIES ENABLE_EXPORTS TRUE)
-target_include_directories(xrEngine PRIVATE "${XRAY_SDK_INCLUDE_DIR}")
+target_include_directories(xrEngine PRIVATE
+  "${XRAY_LUA_INCLUDE_DIR}" "${XRAY_SDK_INCLUDE_DIR}")
 target_precompile_headers(xrEngine PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/xrEngine/stdafx.h")
 set_source_files_properties(
@@ -721,9 +864,12 @@ endif()
 #   cmake --build build --config Release
 #   cmake --install build --config Release   (copies DLLs/EXE to <game>/bin)
 set(_xray_runtime_targets
-  BugTrap ode openal32 CxImage luajit luabind
+  ode openal32 CxImage luajit luabind
   xrCore xrCDB xrCPU_Pipe xrNetServer xrParticles xrXMLParser xrGameSpy
   xrSound xrAPI xrD3D9-Null xrGame xrEngine)
+if(TARGET BugTrap) # Win32-only (x64 uses the plain xrDebug.cpp handler)
+  list(APPEND _xray_runtime_targets BugTrap)
+endif()
 foreach(_r R1 R2 R3)
   if(TARGET xrRender_${_r})
     list(APPEND _xray_runtime_targets xrRender_${_r})

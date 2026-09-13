@@ -7,11 +7,13 @@ if(NOT MSVC)
   message(WARNING "X-Ray Fixes CMake is tested with MSVC (Visual Studio 2022). "
                   "Other compilers are not supported by this starter.")
 endif()
+# 32-bit (Win32) is the default; x64 is supported via the vs2022-x64 preset
+# (see the XRAY_64BIT flag below and the per-arch gates in engine/CMakeLists.txt).
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-  message(FATAL_ERROR
-    "X-Ray Fixes is a 32-bit (Win32) codebase. "
-    "Re-configure with a Win32 generator, e.g. "
-    "cmake -S . -B build -G \"Visual Studio 17 2022\" -A Win32")
+  set(XRAY_64BIT TRUE)
+  message(STATUS "X-Ray Fixes: configuring 64-bit (x64) build")
+else()
+  set(XRAY_64BIT FALSE)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -90,8 +92,11 @@ set(XRAY_SDK_LIB_DIR "${XRAY_SDK_DIR}/libraries")
 # Global MSVC comfort flags matching the vcxproj defaults:
 #  - /MP parallel builds (xrGame already used MultiProcessorCompilation)
 #  - /fp:fast (all engine modules set FloatingPointModel=Fast)
-#  - large-address-aware binaries (all engine Link blocks set it)
+#  - large-address-aware binaries (all engine Link blocks set it; x64 ignores
+#    the flag, so it is only passed for 32-bit builds)
 if(MSVC)
   add_compile_options(/MP /fp:fast)
-  add_link_options(/LARGEADDRESSAWARE)
+  if(NOT XRAY_64BIT)
+    add_link_options(/LARGEADDRESSAWARE)
+  endif()
 endif()
